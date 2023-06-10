@@ -1,6 +1,7 @@
-//跟踪服务器模块
+//存储服务器模块
 //定义缓存类
 
+#include "01_types.h"
 #include "01_globals.h"
 #include "03_cache.h"
 
@@ -8,7 +9,7 @@
 int cache_c::get(char* const key,acl::string& value)const{
 	//构造键
 	acl::string tracker_key;
-	tracker_key.format("%s:%s",TRACKER_REDIS_PREFIX,key);//添加Redis前缀，避免键冲突
+	tracker_key.format("%s:%s",STORAGE_REDIS_PREFIX,key);//添加Redis前缀，避免键冲突
 	
 	//检查Redis连接池
 	if(!g_rconns){
@@ -52,7 +53,7 @@ int cache_c::get(char* const key,acl::string& value)const{
 int cache_c::set(char* const key,char const* value,int timeout /* = -1 */)const{
 	//构造键
 	acl::string tracker_key;
-	tracker_key.format("%s:%s",TRACKER_REDIS_PREFIX,key);//添加Redis前缀，避免键冲突
+	tracker_key.format("%s:%s",STORAGE_REDIS_PREFIX,key);//添加Redis前缀，避免键冲突
 	
 	//检查Redis连接池
 	if(!g_rconns){
@@ -92,7 +93,7 @@ int cache_c::set(char* const key,char const* value,int timeout /* = -1 */)const{
 int cache_c::del(char const* key)const{
 	//构造键
 	acl::string tracker_key;
-	tracker_key.format("%s:%s",TRACKER_REDIS_PREFIX,key);//添加Redis前缀，避免键冲突
+	tracker_key.format("%s:%s",STORAGE_REDIS_PREFIX,key);//添加Redis前缀，避免键冲突
 	
 	//检查Redis连接池
 	if(!g_rconns){

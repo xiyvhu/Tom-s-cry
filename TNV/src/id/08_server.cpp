@@ -1,24 +1,15 @@
-//跟踪服务器
-//定义服务器类
+//ID服务器模块
+//实现服务器类
 
 #include <unistd.h>
-#include "01_globals.h"
 #include "02_proto.h"
 #include "03_util.h"
-#include "07_service.h"
-#include "11_server.h"
+#include "01_globals.h"
+#include "05_service.h"
+#include "07_server.h"
 
 //进程启动时被调用
 void server_c::proc_on_init(void){
-	//应用ID表
-	if(!cfg_appids || !strlen(cfg_appids)){
-		logger_fatal("application ids is null");
-	}
-	split(cfg_appids,g_appids);
-	if(g_appids.empty()){
-		logger_fatal("application ids is empty");
-	}
-	
 	//MySQL地址表
 	if(cfg_maddrs || !strlen(cfg_maddrs)){
 		logger_fatal("mysql addresses is null");
@@ -28,75 +19,29 @@ void server_c::proc_on_init(void){
 		logger_fatal("mysql addresses is empty");
 	}
 	
-	//Redis地址表
-	if(!cfg_raddrs || !strlen(cfg_raddrs)){
-		logger_error("radis addresses is null");
-	}else{
-		split(cfg_raddrs.g_raddrs);
-		if(g_raddrs.empty()){
-			logger_error("redis addresses is empty");
-		}else{
-			//遍历Redis地址表，尝试创建连接池
-			for(std::vector<std::string>::const_iterator raddr = g_raddrs.begin();raddr != g_raddrs.end();++raddr){
-				if(g_rconns = new acl::redis_client_pool(raddr->c_str(),cfg_maxconns)){
-					//设置Redis连接超时和读写超时
-					g_rconns->set_timeout(cfg_ctimeout,cfg_rtimeout);
-					break;
-				}
-			}
-			if(!g_rconns){
-				logger_error("create redis connection pool fail,cfg_raddrs:%s",cfg_raddrs);
-			}
-		}
-	}
 	//主机名
 	char hostname[256 + 1] = {};
 	if(gethostname(hostname,sizeof(hostname) - 1)){
 		logger_error("call gethostname fail:%s",strerror(errno));
 	}
 	g_hostname = hostname;
-	
-	//创建并启动存储服务器状态检查线程
-	if(m_status = new status_c){
-		m_status->set_detachable(false);
-		m_status->start();
-	}
+
+    //最大偏移
+    if(cfg_maxconns < 10){
+        logger_fatal("invalid maximum offset:%d < 10",cfg_maxoffset);
+    }
 	
 	//打印配置信息
-	logger("cfg_appids:$s,cfg_maddrs:%s,cfg_raddrs:%s,cfg_interval:%d,cfg_mtimeout:%d,cfg_maxconns:%d,cfg_ctimeout:%d,cfg_rtimeout:%d,cfg_ktimeout:%d",
-			cfg_appids,cfg_maddrs,cfg_raddrs,cfg_interval,cfg_mtimeout,cfg_maxconns,cfg_ctimeout,cfg_rtimeout,cfg_ktimeout);	
+	logger("cfg_maddrs:%s,cfg_mtimeout:%d,cfg_maxoffset:%d",cfg_maddrs,cfg_mtimeout,cfg_maxoffset);	
 }
 	
 //进程企图退出时被调用 
 bool server_c::proc_exit_timer(size_t nclients,size_t nthreads){
-	//终止存储服务器庄涛检查线程
-	m_status->stop();
-	
 	if(!nclients || !nthreads){
 		logger("nclients:%lu,nthreads:%lu",nclients,nthreads);
 		return true;
 	}
 	return false;
-}
-	
-//进程即将退出时被调用
-void server_c::proc_on_exit(void){
-	//回收存储服务器状态检查线程
-	if(!m_status->wait(NULL)){
-		logger_error("wait thread #%lu fail",m_status->thread_id());
-	}
-	
-	//销毁存储服务器状态检查线程
-	if(m_status){
-		delete m_status;
-		m_status = NULL;
-	}
-	
-	//销毁Redis连接池
-	if(g_rconns){
-		delete g_rconns;
-		g_rconns = NULL;
-	}
 }	
 
 //线程获得连接时被调用，函数返回true，与线程绑定的连接将会保持，否则将被关闭

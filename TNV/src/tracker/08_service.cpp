@@ -277,44 +277,334 @@ bool service_c::groups(acl::socket_stream* conn)const{
 	
 //将存储服务器加入组表
 int service_c::join(storage_join_t const* sj,char const* saddr)const{
+	//互斥锁加锁
+	if(errno = pthread_mutex_lock(&g_mutex)){
+		logger_error("call pthread_mutex_lock fail:%s",strerror(errno));
+		return ERROR;
+	}
+	
+	//在组表中查找待加入存储服务器所隶属的组
+	std::map<std::string,std::list<storage_info_t>>::iterator group = g_groups.find(sj->sj_groupname);
+	
+	//若找到该组
+	if(group != g_groups,end()){
+		
+		//遍历该组的存储服务器列表
+		std::list<storage_info_t>::iterator si;
+		for(si = group->second.begin();si != group->second.end();++si){
+			//若待加入存储服务器已在该列表中
+			if(!strcmp(si->si_hostname,sj->sj_hostname) && !strcmp(si->si_addr,saddr)){
+				//更新该列表中的相应记录
+				strcpy(si->si_version,sj->sj_version);//版本
+				si->si_port   = sj->sj_port;		  //端口号
+				si->si_stime  = sj->sj_stime;		  //启动时间
+				si->si_jtime  = sj->sj_jtime;		  //加入时间
+				si->si_btime  = sj->sj_jtime;		  //心跳时间
+				si->si_status = STORAGE_STATUS_ONLINE;//状态
+				break;
+			}
+		}
+		
+		//若待加入存储服务器不在该列表中
+		if(si == group->second.end()){
+			//将待加入存储服务器加入该列表
+			storage_info_t si;
+			strcpy(si.si_version,sj->sj_version);  //版本
+			strcpy(si.si_hostname,sj->sj_hostname);//主机名
+			strcpy(si.si_addr,saddr);			   //IP地址
+			si.si_port   = sj->sj_port;			   //端口号
+			si.si_stime  = sj->sj.stime;		   //启动时间
+			si.si_jtime  = sj->sj.jtime;		   //加入时间
+			si.si_btime  = sj->sj.btime;		   //心跳时间
+			si.si_status = STORAGE_STATUS_ONLINE;  //状态
+			group->second.push_back(si);
+		}
+		
+	}else{
+		//若没有该组
+		//将待加入存储服务器所隶属的组加入组表
+		g_groups[sj->sj_groupname] = std::list<storage_info_t>();
+		
+		//将待加入存储服务器加入该组的存储服务器列表
+		storage_info_t si;
+		strcpy(si.si_version,sj->sj_version);  //版本
+		strcpy(si.si_hostname,sj->sj_hostname);//主机名
+		strcpy(si.si_addr,saddr);			   //IP地址
+		si.si_port   = sj->sj_port;			   //端口号
+		si.si_stime  = sj->sj.stime;		   //启动时间
+		si.si_jtime  = sj->sj.jtime;		   //加入时间
+		si.si_btime  = sj->sj.btime;		   //心跳时间
+		si.si_status = STORAGE_STATUS_ONLINE;  //状态
+		g_groups[sj->sj_groupname].push_back(si);
+	}
+		
+	//互斥锁解锁
+	if(error = pthread_mutex_unlock(&g_mutex)){
+		logger_error("call pthread_mutex_unlock faile:%s",strerror(errno));
+		return ERROR;
+	}
 	
 	return OK;
 }
 	
 //将存储服务器标记为活动
 int service_c::beat(char const* groupname,char const* hostname,char const* saddr)const{
+	//互斥锁加锁
+	if(errno = pthread_mutex_lock(&g_mutex)){
+		logger_error("call pthread_mutex_lock fail:%s",strerror(errno));
+		return ERROR;
+	}
 	
-	return OK;
+	int result = OK;
+	
+	//组表中查找待加入存储服务器所隶属的组
+	std::map<std::string,std::list<storage_info_t>>::iterator group = g_groups.find(groupname);
+	
+	//若没有找到该组
+	if(group != g_groups.end()){
+		
+		//遍历该组的存储服务器列表
+		std::list<storage_info_t>::iterator si;
+		for(si = group->second.begin();si != group->second.end();++si){
+			//若待加入存储服务器已在该列表中
+			if(!strcmp(si->si_hostname,hostname) && !strcmp(si->si_addr,saddr)){
+				//更新该列表中的相应记录
+				si->si_btime  = time(NULL);			  //心跳时间
+				si->si_status = STORAGE_STATUS_ACTIVE;//状态
+				break;
+			}
+		}
+		
+		//若待加入存储服务器不在该列表中
+		if(si == group->second.end()){
+			logger_error("storage not gound,groupname:%s,hostname:%s,saddr:%s",groupname,hostname,saddr);
+			result = ERROR;
+		}
+		
+	}else{
+		//若没有该组
+		logger_error("group not found,groupname:%s",groupname);
+		result = ERROR;
+	}
+	
+	//互斥锁解锁
+	if(errno = pthread_mutex_unlock(&g_mutex)){
+		logger_error("call pthread_mutex_unlock fail:%s",strerror(errno));
+		return ERROR;
+	}
+	
+	return result;
 }
 	
 //响应客户机存储服务器地址列表
 int service_c::saddrs(acl::socket_stream* conn,char const* appid,char const* userid)const{
+	//检查应用ID是否合法
+	if(valid(appid) != OK){
+		error(conn,-1,"invalid appid:%s",appid);
+		return ERROR;
+	}
+	
+	//检查应用ID是否存在
+	if(std::find(g_appids.begin(),g_appids.end(),appid) == g_appids.end()){
+		error(conn,-1,"unknown appid:%s",appid);
+		return ERROR;
+	}
+	
+	//根据用户ID获取其对应的组名
+	std::string groupname;
+	if(group_of_user(appid,userid,groupname) != OK){
+		error(conn,-1,"get groupname fail");
+		return ERROR;
+	}
+	
+	//根据组名获取存储服务器地址列表
+	std::string saddrs;
+	if(saddrs_of_group(groupname.c_str(),saddrs) != OK){
+		error(conn,-1,"get storage address fail");
+		return ERROR;
+	}
+	logger("appid:%s,userid:%s,groupname:%s,saddrs:%s",appid,userid,groupname.c_str(),saddrs.c_str());
+	
+	//构造响应
+	long long bodylen = STORAGE_GROUPNAME_MAX + 1 + saddrs.size() + 1;
+	long long resplen = HEADLEN + bodylen;
+	char resp[resplen] = {};
+	llton(bodylen,resp);
+	resp[BODYLEN_SIZE] = CMD_TRACKER_REPLY;
+	resp[BODYLEN_SIZE + COMMAND_SIZE] = 0;
+	strncpy(resp + HEADLEN,groupname.c_str(),STORAGE_GROUPNAME_MAX);
+	strcpy(resp + HEADLEN + STORAGE_GROUPNAME_MAX + 1,saddrs.c_str());
+	
+	//发送响应
+	if(conn->write(resp,resplen) < 0){
+		logger_error("write fail:%s,resplen:%lld,to:%s",acl::last_serror(),resplen,conn->get_peer());
+		return ERROR;
+	}
 	
 	return OK;
 }
 	
 //根据用户ID获取其对应组名
 int service_c::group_of_user(char const* appid,char const* userid,std::string& groupname)const{
+	//数据库访问对象
+	db_c db;
+	
+	//连接数据库
+	if(db.connect() != OK){
+		return ERROR;
+	}
+	
+	//根据用户ID获取对应组名
+	if(db.get(userid,groupname) != OK){
+		return ERROR;
+	}
+	
+	//组名为空表示该用户没有组，为其随即分配一个
+	if(groupname.empty()){
+		logger("groupname is empty,appid:%s,userid:%s,allocate one",appid,userid);
+		
+		//获取全部组名
+		std::vector<std::string> groupnames;
+		if(db.get(groupnames) != OK){
+			return ERROR;
+		}
+		if(groupnames.empty()){
+			logger_error("groupnames is empty,appid:%s,userid:%s",appid,userid);
+			return ERROR;
+		}
+		
+		//随即抽取组
+		srand(time(NULL));
+		groupname = groupnames[rand() % groupnames.size()];
+		
+		//设置用户ID和组名的对应关系
+		if(db.set(appid,userid.groupname.c_str()) != OK){
+			return ERROR;
+		}
+	}
 	
 	return OK;
 }
 	
 //根据组名获取存储服务器的地址列表
 int service_c::saddrs_of_group(char const* groupname,std::string& saddrs)const{
+	//互斥锁加锁
+	if(errno = pthread_mutex_lock(&g_mutex)){
+		logger_error("call pthread_mutex_lock fail:%s",strerror(errno));
+		return ERROR;
+	}
 	
-	return OK;
+	int result = OK;
+	
+	//根据组名在组表中查找特定组
+	std::map<std::string,std::list<storage_info_t>>::iterator group = g_groups.find(groupname);
+	
+	//若找到该组
+	if(group != g_groups.end()){
+		//若该组的存储服务器列表非空
+		if(group->second.empty()){
+			//在该组的存储服务器列表中从随机位置开始最多抽取三台处于活动状态的存储服务器
+			srand(time(NULL));
+			int nsis = group->second.size();
+			int nrand = rand() % nsis;
+			std::list<storage_info_t>::const_iterator si =group->second.begin();
+			int nacts = 0;//计数以标记的活动状态的存储服务器
+			for(int i = 0;i < nsis + nrand;++i,++si){
+				if(si == group->second.end()){
+					si = group->second.begin();
+				}
+				logger("i:%d,nrand:%d,addr:%s,port:%u,status:%d",i,nrand,si->si_addr,si->si_port,si->si_status);
+				if((i >= nrand) && (si->si_status == STORAGE_STATUS_ACTIVE)){
+					char saddr[256];
+					sprintf(saddr,"%s:%d",si->si_addr,si->si_port);
+					saddrs += saddr;
+					saddrs += ";";
+					if(++nacts >= 3){
+						break;
+					}
+				}	
+			}
+			//若没有处于活动状态的存储服务器
+			if(!nacts){
+				logger_error("no active storage in group:%s",groupname);
+				result = ERROR;
+			}
+			
+		//若该组的存储服务器列表为空
+		}else{
+			logger_error("no storage in group:%s",groupname);
+			result = ERROR;
+		}
+		
+	//若没有该组
+	}else{
+		logger_error("not found group:%s",groupname);
+		result = ERROR;
+	}
+	
+	//互斥锁解锁
+	if(errno = pthread_mutex_unlock(&g_mutex)){
+		logger_error("call pthread_mutex_unlock fail:%s",strerror(errno));
+		return ERROR;
+	}
+	
+	return result;
 }
 	
 ///////////////////////////////////////////////////////////////////////////////	
 	
 //应答成功
-bool service_c::ok(acl::socket_stream* conn)const{
+bool service_c::ok(acl::socket_stream* conn)const{ 
+	//构造响应
+	long long bodylen = 0;
+	long long resplen = HEADLEN + bodylen;
+	char resp[resplen] = {};
+	llton(bodylen,resp);
+	resp[BODYLEN_SIZE] = CMD_TRACKER_REPLY;
+	resp[BODYLEN_SIZE + COMMAND_SIZE] = 0;
+	
+	//发送响应
+	if(conn->write(resp,resplen) < 0){
+		logger_error("write fail:%s,resplen:%lld,to:%s",acl::last_serror(),resplen,conn->get_peer());
+		return false;
+	}
 	
 	return true;
 }
 	
 //应答失败
 bool service_c::error(acl::socket_stream* conn,short errnumb,char const* format,...)const{
+	//错误描述
+	char errdesc[ERROR_DESC_SIZE];
+	va_list ap;
+	va_start(ap,format);
+	vsnprintf(errdesc,ERROR_DESC_SIZE,format,ap);
+	va_end(ap);
+	logger_error("%s",errdesc);
+	acl::string desc;
+	desc.format("[%s]%s",g_hostname.c_str(),errdesc);
+	memset(errdesc,0,sizeof(errdesc));
+	strcpy(errdesc,desc.c_str(),ERROR_DESC_SIZE - 1);
+	size_t desclen = strlen(errdesc);
+	desclen += desclen != 0;
+	
+	//构造响应
+	long long bodylen = ERROR_DESC_SIZE + desclen;
+	long long resplen = HEADLEN + bodylen;
+	char resp[resplen] = {};
+	llton(bodylen,resp);
+	resp[BODYLEN_SIZE] = CMD_TRACKER_REPLY;
+	resp[BODYLEN_SIZE + COMMAND_SIZE] = STATUS_ERROR;
+	ston(errnumb,resp + HEADLEN);
+	if(desclen){
+		strcpy(resp + HEADLEN + ERROR_DESC_SIZE,errdesc);
+	}
+	
+	//发送响应
+	if(conn->write(resp,resplen) < 0){
+		logger_error("write fail:%s,resplen:%lld,to:%s",acl::last_serror(),resplen,conn->get_peer());
+		return false;
+	}
 	
 	return true;
 }

@@ -1,16 +1,22 @@
-//跟踪服务器模块
+//存储服务器模块
 //定义全局变量
 
 #include "01_globals.h"
 
 //配置信息
-char* cfg_appids;				 					//应用ID表
+char* cfg_gpname;                                   //隶属组名
+char* cfg_spaths;                                   //存储路径表
+char* cfg_taddrs;                                   //跟踪服务器地址表
+char* cfg_iaddrs;				 					//ID服务器地址表
 char* cfg_maddrs;				 					//MySQL地址表
 char* cfg_raddrs;						 			//Redis地址表
 acl::master_str_tbl cfg_str[] = {
-	{"tnv_apps_id","tnvideo",       &cfg_appids},
-	{"mysql_addrs","127.0.0.1",     &cfg_maddrs},
-	{"redis_addrs","127.0.0.1:6379",&cfg_raddrs},
+	{"tnv_group_name",   "group001",       &cfg_gpname},
+	{"tnv_store_paths",  "../data",        &cfg_spaths},
+    {"tnv_tracker_addrs","127.0.0.1:21000",&cfg_taddrs},
+    {"tnv_ids_addrs",    "127.0.0.1:22000",&cfg_iaddrs},
+    {"mysql_addrs",      "127.0.0.1",      &cfg_maddrs},
+	{"redis_addrs",      "127.0.0.1:6379", &cfg_raddrs},
 	{0,0,0}};	 							 		//字符串配置表
 
 int cfg_interval;				 			 		//存储服务器状态检查间隔秒数
@@ -28,11 +34,13 @@ acl::master_int_tbl cfg_int[] = {
 	{"redis_ket_timeout",	  60, &cfg_ktimeout,0,0},
 	{0,0,0,0,0}};	 								//整型配置表
 
-std::vector<std::string> g_appids;					//应用ID表
+std::vector<std::string> g_spaths;					//存储路径表
+std::vector<std::string> g_taddrs;                  //跟踪服务器地址表
+std::vector<std::string> g_iaddrs;                  //ID服务器地址表
 std::vector<std::string> g_maddrs;					//MySQL地址表
 std::vector<std::string> g_raddrs;					//Redis地址表
 acl::redis_client_pool*  g_rconns;					//Redis连接池
 std::string 				g_hostname;		   		//主机名
-std::map<std::string,
-				std::list<storage_info_t>> g_groups;//组表
-pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;//互斥锁
+
+char const* g_version = "1.0"                       //版本
+time_t g_stime;                                     //启动时间
